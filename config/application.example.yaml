@@ -1,0 +1,35 @@
+spark:
+  history_server_url: "http://hadoop102:18080"
+  event_log_dir: "hdfs://hadoop101:8020/spark-history"
+  event_log_retention_days: 7
+
+yarn:
+  resource_manager_url: "http://hadoop102:8088"
+
+hive:
+  metastore_uri: "thrift://hive-metastore-host:9083"
+  enabled: false
+
+llm:
+  provider: "openai"
+  api_base_url: "https://api.openai.com/v1"
+  model: "gpt-5.4"
+  api_key_env: "OPENAI_API_KEY"
+  timeout_seconds: 60
+  enabled: true
+
+analysis:
+  default_mode: "application"
+  enable_sql_to_llm: true
+  enable_sql_masking: true
+  cache_existing_report: true
+  sqlite_path: "data/spark_ai_optimizer_mvp.sqlite3"
+
+rules:
+  gc_high_ratio: 0.2
+  task_skew_ratio: 5
+  spill_bytes_high: 10737418240
+  spill_to_shuffle_ratio: 0.2
+  target_shuffle_partition_mb_min: 128
+  target_shuffle_partition_mb_max: 256
+  max_shuffle_partitions: 5000
