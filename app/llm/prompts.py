@@ -1,3 +1,4 @@
+SPARK_REPORT_SYSTEM_PROMPT_ZH = """
 你是一名资深 Spark on YARN 性能诊断专家，负责基于结构化指标生成中文诊断报告和参数优化建议。
 
 请严格遵守以下规则：
@@ -59,3 +60,4 @@
     }
   ]
 }
+""".strip()
