@@ -13,6 +13,8 @@ class RecommendationEngine:
     def recommend(self, metrics: NormalizedMetrics, diagnoses: list[DiagnosisResult]) -> list[Recommendation]:
         recommendations: list[Recommendation] = []
         rule_codes = {item.rule_code for item in diagnoses}
+        if "TASK_SKEW_HIGH" in rule_codes:
+            recommendations.extend(self._task_skew_recommendations())
         if "SHUFFLE_SPILL_HIGH" in rule_codes or "SHUFFLE_PARTITION_TOO_LOW" in rule_codes or "PARALLELISM_LOW" in rule_codes:
             maybe = self._shuffle_partitions(metrics)
             if maybe:
@@ -29,6 +31,30 @@ class RecommendationEngine:
         if maybe:
             recommendations.append(maybe)
         return recommendations
+
+    def _task_skew_recommendations(self) -> list[Recommendation]:
+        return [
+            Recommendation(
+                param="sql",
+                current=None,
+                suggested="inspect join/group by key distribution and consider salting hot keys",
+                priority="high",
+                confidence=0.78,
+                evidence=["TASK_SKEW_HIGH triggered from stage task duration or shuffle distribution"],
+                risk="salting or SQL rewrites can change row distribution and must preserve query semantics",
+                validation="compare result correctness, max task duration, median task duration, and shuffle read skew after one controlled run",
+            ),
+            Recommendation(
+                param="spark.sql.adaptive.enabled",
+                current=None,
+                suggested="true",
+                priority="medium",
+                confidence=0.68,
+                evidence=["TASK_SKEW_HIGH triggered; AQE skew join handling can mitigate skewed shuffle partitions"],
+                risk="AQE can change physical plans, so compare plan changes and output consistency",
+                validation="enable AQE with skew join handling, then compare skewed task duration and total SQL execution time",
+            ),
+        ]
 
     def _shuffle_partitions(self, metrics: NormalizedMetrics) -> Recommendation | None:
         shuffle_bytes = sum(int(stage.get("shuffleWriteBytes") or 0) for stage in metrics.stages)
@@ -134,4 +160,3 @@ def _memory_to_mb(value: str) -> int | None:
         return int(raw)
     except ValueError:
         return None
-

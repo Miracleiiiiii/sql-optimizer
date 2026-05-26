@@ -19,6 +19,7 @@ class NormalizedMetrics:
     resource_profiles: list[dict[str, Any]]
     jobs: list[dict[str, Any]]
     stages: list[dict[str, Any]]
+    tasks: list[dict[str, Any]]
     executors: list[dict[str, Any]]
     sql_executions: list[dict[str, Any]]
     missing_fields: list[str] = field(default_factory=list)
@@ -46,4 +47,3 @@ class Recommendation:
     risk: str
     validation: str
     auto_applicable: bool = False
-

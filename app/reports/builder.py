@@ -16,6 +16,7 @@ def build_rule_report(
         "application": metrics.application,
         "metricsSummary": {
             "stageCount": len(metrics.stages),
+            "taskCount": len(metrics.tasks),
             "executorCount": len(metrics.executors),
             "sqlExecutionCount": len(metrics.sql_executions),
             "totalShuffleReadBytes": sum(int(stage.get("shuffleReadBytes") or 0) for stage in metrics.stages),
@@ -28,4 +29,3 @@ def build_rule_report(
         "aiReport": ai_report,
         "missingFields": metrics.missing_fields,
     }
-

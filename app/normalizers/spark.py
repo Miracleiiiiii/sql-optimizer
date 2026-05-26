@@ -110,6 +110,51 @@ def _normalize_stages(stages: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return normalized
 
 
+def _normalize_tasks(task_list_by_stage: Any) -> list[dict[str, Any]]:
+    if not isinstance(task_list_by_stage, dict):
+        return []
+    normalized: list[dict[str, Any]] = []
+    for stage_key, tasks in task_list_by_stage.items():
+        stage_id, attempt_id = _parse_stage_key(stage_key)
+        if not isinstance(tasks, list):
+            continue
+        for item in tasks:
+            if not isinstance(item, dict):
+                continue
+            metrics = item.get("taskMetrics") if isinstance(item.get("taskMetrics"), dict) else {}
+            shuffle_read = metrics.get("shuffleReadMetrics") if isinstance(metrics.get("shuffleReadMetrics"), dict) else {}
+            shuffle_write = metrics.get("shuffleWriteMetrics") if isinstance(metrics.get("shuffleWriteMetrics"), dict) else {}
+            normalized.append(
+                {
+                    "stageId": item.get("stageId", stage_id),
+                    "attemptId": item.get("attemptId", attempt_id),
+                    "taskId": item.get("taskId"),
+                    "index": item.get("index"),
+                    "executorId": item.get("executorId"),
+                    "host": item.get("host"),
+                    "durationMs": int(item.get("duration") or 0),
+                    "executorRunTimeMs": int(item.get("executorRunTime") or metrics.get("executorRunTime") or 0),
+                    "shuffleReadBytes": int(shuffle_read.get("localBytesRead") or 0)
+                    + int(shuffle_read.get("remoteBytesRead") or 0),
+                    "shuffleWriteBytes": int(shuffle_write.get("bytesWritten") or 0),
+                    "memoryBytesSpilled": int(metrics.get("memoryBytesSpilled") or 0),
+                    "diskBytesSpilled": int(metrics.get("diskBytesSpilled") or 0),
+                    "peakExecutionMemory": int(metrics.get("peakExecutionMemory") or 0),
+                }
+            )
+    return normalized
+
+
+def _parse_stage_key(stage_key: Any) -> tuple[int | None, int | None]:
+    if not isinstance(stage_key, str) or ":" not in stage_key:
+        return None, None
+    raw_stage, raw_attempt = stage_key.split(":", 1)
+    try:
+        return int(raw_stage), int(raw_attempt)
+    except ValueError:
+        return None, None
+
+
 def _duration_from_times(start: str | None, end: str | None) -> int | None:
     # Spark already provides executorRunTime; wall-clock stage duration parsing
     # is intentionally deferred to avoid timezone edge cases in MVP.
@@ -182,6 +227,8 @@ def normalize(history_payload: dict[str, Any], yarn_payload: dict[str, Any]) -> 
     sql_items = history_payload.get("sql") if isinstance(history_payload.get("sql"), list) else []
 
     missing = []
+    if isinstance(history_payload.get("missingFields"), list):
+        missing.extend(str(item) for item in history_payload["missingFields"])
     for key in ("application", "jobs", "stages", "executors", "environment"):
         if key not in history_payload:
             missing.append(f"spark_history.{key}")
@@ -193,6 +240,7 @@ def normalize(history_payload: dict[str, Any], yarn_payload: dict[str, Any]) -> 
         resource_profiles=resource_profiles,
         jobs=jobs,
         stages=_normalize_stages(stages),
+        tasks=_normalize_tasks(history_payload.get("taskListByStage")),
         executors=_normalize_executors(executors),
         sql_executions=_normalize_sql(sql_items),
         missing_fields=missing,

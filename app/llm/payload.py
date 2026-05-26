@@ -14,6 +14,22 @@ def build_llm_payload(
 ) -> dict[str, Any]:
     primary_sql = [item for item in metrics.sql_executions if item.get("isPrimaryExecution")]
     ignored_sql = [item for item in metrics.sql_executions if item.get("isCommandResult")]
+    task_skew_summary = [
+        {
+            "stageId": item.evidence.get("stageId"),
+            "attemptId": item.evidence.get("attemptId"),
+            "skewedTaskId": item.evidence.get("skewedTaskId"),
+            "durationSkewRatio": item.evidence.get("durationSkewRatio"),
+            "maxDurationMs": item.evidence.get("maxDurationMs"),
+            "medianDurationMs": item.evidence.get("medianDurationMs"),
+            "maxShuffleReadBytes": item.evidence.get("maxShuffleReadBytes"),
+            "medianShuffleReadBytes": item.evidence.get("medianShuffleReadBytes"),
+            "maxPeakExecutionMemory": item.evidence.get("maxPeakExecutionMemory"),
+            "medianPeakExecutionMemory": item.evidence.get("medianPeakExecutionMemory"),
+        }
+        for item in diagnoses
+        if item.rule_code == "TASK_SKEW_HIGH"
+    ]
     sql_summary = [
         {
             "executionId": item.get("executionId"),
@@ -50,6 +66,7 @@ def build_llm_payload(
             },
             "metricsSummary": {
                 "stageCount": len(metrics.stages),
+                "taskCount": len(metrics.tasks),
                 "executorCount": len(metrics.executors),
                 "sqlExecutionCount": len(metrics.sql_executions),
                 "primarySqlExecutionCount": len(primary_sql),
@@ -58,6 +75,7 @@ def build_llm_payload(
         },
         "diagnosisRules": [asdict(item) for item in diagnoses],
         "recommendations": [asdict(item) for item in recommendations],
+        "taskSkewSummary": task_skew_summary,
         "sqlSummary": sql_summary,
         "ignoredSqlExecutions": [
             {

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import statistics
+
 from app.core.config import RuleConfig
 from app.models import DiagnosisResult, NormalizedMetrics
 
@@ -12,6 +14,7 @@ class DiagnosisEngine:
         results: list[DiagnosisResult] = []
         results.extend(self._gc_high(metrics))
         results.extend(self._shuffle_spill_high(metrics))
+        results.extend(self._task_skew_high(metrics))
         results.extend(self._parallelism_low(metrics))
         results.extend(self._shuffle_partition_too_low(metrics))
         results.extend(self._failed_or_cancelled(metrics))
@@ -34,6 +37,57 @@ class DiagnosisEngine:
                 tuning_direction=["review spark.executor.memory", "review spark.executor.cores", "check shuffle spill"],
             )
         ]
+
+    def _task_skew_high(self, metrics: NormalizedMetrics) -> list[DiagnosisResult]:
+        results: list[DiagnosisResult] = []
+        tasks_by_stage: dict[tuple[int | None, int | None], list[dict]] = {}
+        for task in metrics.tasks:
+            tasks_by_stage.setdefault((task.get("stageId"), task.get("attemptId")), []).append(task)
+
+        for (stage_id, attempt_id), tasks in tasks_by_stage.items():
+            if len(tasks) < 10:
+                continue
+            duration_result = _max_to_median(tasks, "durationMs")
+            shuffle_result = _max_to_median(tasks, "shuffleReadBytes")
+            memory_result = _max_to_median(tasks, "peakExecutionMemory")
+            if not duration_result and not shuffle_result and not memory_result:
+                continue
+
+            primary = duration_result or shuffle_result or memory_result
+            assert primary is not None
+            if primary["ratio"] < self.config.task_skew_ratio:
+                continue
+            skewed_task = primary["task"]
+            results.append(
+                DiagnosisResult(
+                    rule_code="TASK_SKEW_HIGH",
+                    problem_type="data_skew",
+                    severity="high" if primary["ratio"] >= self.config.task_skew_ratio * 2 else "medium",
+                    confidence=0.86,
+                    evidence={
+                        "stageId": stage_id,
+                        "attemptId": attempt_id,
+                        "taskCount": len(tasks),
+                        "skewedTaskId": skewed_task.get("taskId"),
+                        "durationSkewRatio": _ratio_value(duration_result),
+                        "maxDurationMs": _max_value(duration_result),
+                        "medianDurationMs": _median_value(duration_result),
+                        "shuffleReadSkewRatio": _ratio_value(shuffle_result),
+                        "maxShuffleReadBytes": _max_value(shuffle_result),
+                        "medianShuffleReadBytes": _median_value(shuffle_result),
+                        "peakMemorySkewRatio": _ratio_value(memory_result),
+                        "maxPeakExecutionMemory": _max_value(memory_result),
+                        "medianPeakExecutionMemory": _median_value(memory_result),
+                    },
+                    suspected_cause="one or more tasks in the same stage consume disproportionately more time, shuffle data, or execution memory",
+                    tuning_direction=[
+                        "inspect join/group by key distribution",
+                        "consider salting hot keys",
+                        "enable Spark AQE skew join handling when applicable",
+                    ],
+                )
+            )
+        return results
 
     def _shuffle_spill_high(self, metrics: NormalizedMetrics) -> list[DiagnosisResult]:
         memory_spill = sum(int(stage.get("memoryBytesSpilled") or 0) for stage in metrics.stages)
@@ -135,3 +189,29 @@ def _parse_int(value: str | None) -> int | None:
     except ValueError:
         return None
 
+
+def _max_to_median(tasks: list[dict], field: str) -> dict | None:
+    values = [(int(task.get(field) or 0), task) for task in tasks if int(task.get(field) or 0) > 0]
+    if len(values) < 2:
+        return None
+    numbers = [value for value, _ in values]
+    median = statistics.median(numbers)
+    if median <= 0:
+        return None
+    max_value, max_task = max(values, key=lambda item: item[0])
+    return {"field": field, "max": max_value, "median": median, "ratio": max_value / median, "task": max_task}
+
+
+def _ratio_value(result: dict | None) -> float | None:
+    return round(float(result["ratio"]), 4) if result else None
+
+
+def _max_value(result: dict | None) -> int | None:
+    return int(result["max"]) if result else None
+
+
+def _median_value(result: dict | None) -> float | int | None:
+    if not result:
+        return None
+    median = float(result["median"])
+    return int(median) if median.is_integer() else median
